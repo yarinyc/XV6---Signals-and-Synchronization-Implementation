@@ -9,6 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+//struct sigaction;
 
 // bio.c
 void            binit(void);
@@ -107,7 +108,7 @@ int             cpuid(void);
 void            exit(void);
 int             fork(void);
 int             growproc(int);
-int             kill(int);
+int             kill(int,int); //2.2.1
 struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            pinit(void);
@@ -120,6 +121,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+uint            sigprocmask(uint);
+int             sigaction(int, const struct sigaction*, struct sigaction*);
+void            sigret(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

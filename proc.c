@@ -125,11 +125,13 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  //2.1.2
+  for(int i=0; i<32; i++){
+    p->signalHandlers[i].sa_handler = (void*)SIG_DFL;
+  }
+
   return p;
 }
-
-
-
 
 //PAGEBREAK: 32
 // Set up first user process.
@@ -215,6 +217,15 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  //2.1.2 (2)
+  np->signalMask = curproc->signalMask; //copy signal mask from parent
+  for(int i=0; i<32 ; i++){ //copy all signal handlers from parent
+    np->signalHandlers[i].sa_handler = curproc->signalHandlers[i].sa_handler;
+    np->signalHandlers[i].sigmask = curproc->signalHandlers[i].sigmask;
+  }
+  np->pendingSignals = 0; // no pending siganls on creation
+
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -492,18 +503,21 @@ wakeup(void *chan)
 // Kill the process with the given pid.
 // Process won't exit until it returns
 // to user space (see trap in trap.c).
+// 2.2.1 changes:
 int
-kill(int pid)
+kill(int pid, int signum)
 {
   struct proc *p;
 
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
-      p->killed = 1;
-      // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
-        p->state = RUNNABLE;
+      uint bitwise = 1<<signum;
+      if(signum == SIGSTOP || signum == SIGKILL){
+        if(p->state == SLEEPING)
+          p->state = RUNNABLE;  
+      }
+      p->pendingSignals = p->pendingSignals | bitwise; 
       release(&ptable.lock);
       return 0;
     }
@@ -511,7 +525,7 @@ kill(int pid)
   release(&ptable.lock);
   return -1;
 }
-
+ 
 //PAGEBREAK: 36
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
@@ -548,3 +562,117 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+uint
+sigprocmask(uint sigmask){
+  struct proc *p = myproc();
+  uint oldmask = p->signalMask;
+  p->signalMask = sigmask;
+  return oldmask;
+}
+
+int
+sigaction(int signum, const struct sigaction *act, struct sigaction *oldact){
+  struct proc *p = myproc();
+  if(signum>31 || signum <0 || signum == SIGKILL || signum == SIGSTOP)
+    return -1;
+  if(oldact != null){ //backup old handler
+    struct sigaction* h = &p->signalHandlers[signum];
+    if(h->sa_handler == (void*)SIG_DFL || h->sa_handler == (void*)SIG_IGN || h->sa_handler == (void*)SIGKILL || h->sa_handler == (void*)SIGSTOP || h->sa_handler == (void*)SIGCONT){
+      oldact->sa_handler = p->signalHandlers[signum].sa_handler;
+      oldact->sigmask = myproc()->signalMask;
+    } else {
+      oldact->sa_handler = p->signalHandlers[signum].sa_handler;
+      oldact->sigmask = p->signalHandlers[signum].sigmask;
+    }
+  }
+  p->signalHandlers[signum].sa_handler = act->sa_handler;
+  p->signalHandlers[signum].sigmask = act->sigmask;
+  return 0;
+}
+
+void 
+sigret(void){
+ //struct proc* p = myproc();
+ // p->tf = p->userTrapBackup;
+ //restore the process to its original workflow, when returning from user space @TODO
+}
+
+void 
+sigkill(int signum){
+  struct proc *p = myproc();
+  p->killed = 1;
+  p->pendingSignals = p->pendingSignals & !(1<< signum);
+}
+void 
+sigstop(int signum){
+  struct proc *p = myproc();
+  p->suspend = 1;
+  p->pendingSignals = p->pendingSignals & !(1<< signum);
+}
+
+void
+sigcont(int signum){
+  struct proc *p = myproc();
+  p->suspend = 0;
+  p->pendingSignals = p->pendingSignals & !(1<< signum);
+}
+
+extern void check_signals(void); 
+
+void
+check_signals(void){
+  struct proc *p = myproc();
+  struct sigaction *act;
+  uint pending = p->pendingSignals;
+  uint sigmask = p->signalMask;
+  //is process is suspended and did not recieve SIGCONT yield() immediately
+  if((p->suspend == 1) && (p->pendingSignals & (1<<SIGCONT)) == 0){ //is process is suspended and did not recieve SIGCONT yield() immediately
+    yield();
+  }
+  for(int signum=0; signum<32; signum++){ //go through all pending signals and run their sa_handler()
+    if((pending & 1) && !(sigmask & 1)){ // if recieved signal and not blocked by mask 
+      act = &p->signalHandlers[signum];
+      if(act->sa_handler == SIG_DFL){ // do default behaviour
+          switch (signum){
+          case SIGKILL:
+            sigkill(signum);
+            break;
+          case SIGSTOP:
+            sigstop(signum);
+            break;
+          case SIGCONT:
+            sigcont(signum);
+            break;
+          default:
+            sigkill(signum);
+            break;
+          }
+      }
+      else if(act->sa_handler == SIG_IGN){
+        p->pendingSignals = p->pendingSignals & !(1<< signum);
+      }
+      else if(act->sa_handler == SIGKILL)
+        sigkill(signum);
+      else if(act->sa_handler == SIGSTOP)
+        sigstop(signum);
+      else if(act->sa_handler == SIGCONT)
+        sigcont(signum);
+      //else act->sa_handler(signum); // ***
+    }
+    pending = pending>>1;
+    sigmask = sigmask>>1;
+  }
+}
+
+
+// backup struct{
+//   ... esp ...
+// }
+
+// esp->...
+
+// backup->esp => [esp]
+
+
+
