@@ -66,16 +66,18 @@ myproc(void) {
 }
 
 
-
-
 int 
 allocpid(void) 
 {
   int pid;
-  acquire(&ptable.lock);
-  pid = nextpid++;
-  release(&ptable.lock);
+  do{
+    pid = nextpid;
+  } while(!cas(&nextpid, pid, pid+1));
   return pid;
+  // acquire(&ptable.lock);
+  // pid = nextpid++;
+  // release(&ptable.lock);
+  // return pid;
 }
 
 //PAGEBREAK: 32
@@ -124,6 +126,10 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+
+  // Leave room for backup trap frame.
+  sp -= sizeof *p->userTrapBackup;
+  p->userTrapBackup = (struct trapframe*)sp;
 
   //2.1.2
   for(int i=0; i<32; i++){
@@ -593,9 +599,9 @@ sigaction(int signum, const struct sigaction *act, struct sigaction *oldact){
 
 void 
 sigret(void){
- //struct proc* p = myproc();
- // p->tf = p->userTrapBackup;
- //restore the process to its original workflow, when returning from user space @TODO
+ struct proc* p = myproc();
+ memmove(p->tf, p->userTrapBackup, sizeof(struct trapframe));
+ //restore the process to its original workflow, when returning from user space
 }
 
 void 
@@ -627,7 +633,8 @@ check_signals(void){
   uint pending = p->pendingSignals;
   uint sigmask = p->signalMask;
   //is process is suspended and did not recieve SIGCONT yield() immediately
-  if((p->suspend == 1) && (p->pendingSignals & (1<<SIGCONT)) == 0){ //is process is suspended and did not recieve SIGCONT yield() immediately
+  if((p->suspend == 1) && ((p->pendingSignals & (1<<SIGCONT)) == 0) && ((p->pendingSignals & (1<<SIGKILL)) == 0) ){
+    //is process is suspended and did not recieve SIGCONT yield() immediately
     yield();
   }
   for(int signum=0; signum<32; signum++){ //go through all pending signals and run their sa_handler()
@@ -658,7 +665,15 @@ check_signals(void){
         sigstop(signum);
       else if(act->sa_handler == SIGCONT)
         sigcont(signum);
-      //else act->sa_handler(signum); // ***
+      else{ // user defined handler
+        memmove(p->userTrapBackup, p->tf, sizeof(struct trapframe));
+        uint oldmask = sigprocmask(act->sigmask);
+        //change tf->eip to sa_handler()
+        //push signum to stack
+        //push ptr to sigret()*
+        //
+        sigprocmask(oldmask);
+      }
     }
     pending = pending>>1;
     sigmask = sigmask>>1;
