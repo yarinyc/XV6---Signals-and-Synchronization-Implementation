@@ -20,7 +20,7 @@ alltraps:
   call trap
   addl $4, %esp
 
-.globl check_signals
+# .globl check_signals
   # Return falls through to trapret...
 .globl trapret
 trapret:

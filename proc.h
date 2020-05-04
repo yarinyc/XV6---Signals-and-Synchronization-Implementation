@@ -32,8 +32,44 @@ struct context {
   uint eip;
 };
 
-enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+// INTER_* = intermidiate state before state *
+enum procstate { UNUSED, EMBRYO, SLEEPING, INTER_SLEEPING, RUNNABLE,INTER_RUNNABLE, RUNNING, ZOMBIE, INTER_ZOMBIE };
  
+struct backuptrapframe {
+  // registers as pushed by pusha
+  uint edi;
+  uint esi;
+  uint ebp;
+  uint oesp;      // useless & ignored
+  uint ebx;
+  uint edx;
+  uint ecx;
+  uint eax;
+
+  // rest of trap frame
+  ushort gs;
+  ushort padding1;
+  ushort fs;
+  ushort padding2;
+  ushort es;
+  ushort padding3;
+  ushort ds;
+  ushort padding4;
+  uint trapno;
+
+  // below here defined by x86 hardware
+  uint err;
+  uint eip;
+  ushort cs;
+  ushort padding5;
+  uint eflags;
+
+  // below here only when crossing rings, such as from user to kernel
+  uint esp;
+  ushort ss;
+  ushort padding6;
+};
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -51,9 +87,11 @@ struct proc {
   char name[16];               // Process name (debugging)
   uint pendingSignals;         // 32bit array for all pending signals
   uint signalMask;             // 32bit array for signal mask
+  uint signalMask_backup;
   struct sigaction signalHandlers[32];    // array of size 32 for all sig handlers
-  struct trapframe* userTrapBackup; // user trap frame backup
+  struct backuptrapframe userTrapBackup; // user trap frame backup
   int suspend;                 // if non-zero, have been suspended
+  int block_user_signals;      // 1 if proc is executing a user sighandler, 0 otherwise
 };
 
 // Process memory is laid out contiguously, low addresses first:

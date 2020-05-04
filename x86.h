@@ -148,9 +148,9 @@ static inline int
 cas(volatile void *addr, int expected, int newval){
   int result = 1;
   asm volatile("lock; cmpxchgl %2, (%1)\n\t" 
-                "jz cas_true\n\t"
+                "jz cas_true%=\n\t"
                 "movl $0, %0\n\t"
-                "cas_true:\n\t"
+                "cas_true%=:\n\t"
                 : "=m"(result)
                 : "b"(addr), "r"(newval), "a"(expected) //input: %2 = newval, %1 = *addr 
                 : "memory"); //the code is changing the contents of memory.
