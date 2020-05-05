@@ -145,7 +145,6 @@ found:
     p->signalHandlers[i].sa_handler = (void*)SIG_DFL;
   }
   p->pendingSignals = 0;
-  p->suspend = 0;
   p->block_user_signals = 0;
 
   return p;
@@ -414,7 +413,6 @@ scheduler(void)
 
       swtch(&(c->scheduler), p->context);
       switchkvm();
-
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
@@ -438,8 +436,8 @@ sched(void)
   int intena;
   struct proc *p = myproc();
 
-  // if(!holding(&ptable.lock))
-  //   panic("sched ptable.lock");
+  if(!holding(&ptable.lock))
+    panic("sched ptable.lock");
   if(mycpu()->ncli != 1)
     panic("sched locks");
   if(p->state == RUNNING)
@@ -680,6 +678,7 @@ sigaction(int signum, const struct sigaction *act, struct sigaction *oldact){
   return 0;
 }
 
+//restore the process to its original workflow, when returning from user space
 void 
 sigret(void){
   struct proc* p = myproc();
@@ -687,7 +686,6 @@ sigret(void){
   p->signalMask = p->signalMask_backup;
   p->block_user_signals = 0;
   return;
- //restore the process to its original workflow, when returning from user space
 }
 
 // signal handlers for all the default behaviour:
@@ -698,18 +696,24 @@ sigkill(int signum){
   p->pendingSignals = p->pendingSignals & ~(1<< signum);
   yield(); // stop the process from running
 }
-void 
-sigstop(int signum){
-  struct proc *p = myproc();
-  p->suspend = 1;
-  p->pendingSignals = p->pendingSignals & ~(1<< signum);
-}
 
 void
 sigcont(int signum){
   struct proc *p = myproc();
-  p->suspend = 0;
   p->pendingSignals = p->pendingSignals & ~(1<< signum);
+}
+
+void 
+sigstop(int signum){
+  struct proc *p = myproc();
+  p->pendingSignals = p->pendingSignals & ~(1<< signum);
+  //if process is suspended and did not recieve SIGCONT yield() immediately
+  while(!(p->pendingSignals & (1<<SIGCONT)) && !(p->pendingSignals & (1<<SIGKILL))){
+    yield();
+  }
+  if((p->pendingSignals & (1<<SIGKILL)))
+    sigkill(signum);
+  else sigcont(signum);
 }
 
 extern void check_signals(void);
@@ -722,11 +726,11 @@ check_signals(void){
   struct sigaction *act;
   if (p==0) // to avoid accessing proc before init
     return;
-  if(p->block_user_signals == 1)
-    return;
-  if ((p->tf->cs & 3) != DPL_USER){
-    return; // CPU isn't at privilege level 3, hence in user mode
-  }
+  else if(p->pendingSignals & (1<<SIGKILL))
+    sigkill(SIGKILL);
+  // if ((p->tf->cs & 3) != DPL_USER){
+  //   return; // CPU isn't at privilege level 3, hence in user mode
+  // }
   uint call_sigret_size = (uint)&call_sigret_end - (uint)&call_sigret;
   uint pending = p->pendingSignals;
   uint sigmask = p->signalMask;
@@ -758,18 +762,16 @@ check_signals(void){
         sigstop(signum);
       else if(act->sa_handler == (void*)SIGCONT)
         sigcont(signum);
-      else{ // user defined handler
+      else if(p->block_user_signals == 0){ // user defined handler & no other user handler is currently running
         memmove(&(p->userTrapBackup), p->tf, sizeof(struct trapframe)); //backup the proc tf
         p->signalMask_backup = sigprocmask(act->sigmask); //backup the proc sigmask
-        p->pendingSignals = p->pendingSignals & ~(1<< signum); //turn of signal bit
+        p->pendingSignals = p->pendingSignals & ~(1<< signum); //turn off signal bit
         p->block_user_signals = 1; //block all non default signals
 
         p->tf->esp -= call_sigret_size; //save space for the code of call_sigret
-        // switchuvm(p);
         memmove((void*)p->tf->esp, &call_sigret, call_sigret_size); // copy the code of call_sigret to [esp]
-        
         *((int*)(p->tf->esp - 4)) = signum; // push sig_handler's argument
-        *((int*)(p->tf->esp - 8)) = p->tf->esp; // return address is to call_sigret
+        *((int*)(p->tf->esp - 8)) = p->tf->esp; // return address of sa_handler is to call_sigret
         p->tf->esp -= 8;
         p->tf->eip = (uint)act->sa_handler; // trapret will resume into  the user signal handler
         p->pendingSignals = p->pendingSignals & ~(1<< signum);
@@ -778,11 +780,6 @@ check_signals(void){
     }
     pending = pending>>1;
     sigmask = sigmask>>1;
-  }
-  //if process is suspended and did not recieve SIGCONT yield() immediately
-  if(p->suspend == 1){
-    //*((int*)p->tf->eip) = (uint)&trapret;
-    yield();
   }
 }
 

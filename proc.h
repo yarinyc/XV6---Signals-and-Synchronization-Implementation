@@ -90,7 +90,6 @@ struct proc {
   uint signalMask_backup;
   struct sigaction signalHandlers[32];    // array of size 32 for all sig handlers
   struct backuptrapframe userTrapBackup; // user trap frame backup
-  int suspend;                 // if non-zero, have been suspended
   int block_user_signals;      // 1 if proc is executing a user sighandler, 0 otherwise
 };
 
