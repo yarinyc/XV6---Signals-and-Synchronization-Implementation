@@ -144,18 +144,33 @@ lcr3(uint val)
   asm volatile("movl %0,%%cr3" : : "r" (val));
 }
 
+// static inline int
+// cas(volatile void *addr, int expected, int newval){
+//   int result = 1;
+//   asm volatile("lock; cmpxchgl %2, (%1)\n\t" 
+//                 "jz cas_true%=\n\t"
+//                 "movl $0, %0\n\t"
+//                 "cas_true%=:\n\t"
+//                 : "=m"(result)
+//                 : "b"(addr), "r"(newval), "a"(expected) //input: %2 = newval, %1 = *addr 
+//                 : "memory"); //the code is changing the contents of memory.
+//   return result;
+// } 
+
 static inline int
-cas(volatile void *addr, int expected, int newval){
-  int result = 1;
-  asm volatile("lock; cmpxchgl %2, (%1)\n\t" 
-                "jz cas_true%=\n\t"
-                "movl $0, %0\n\t"
-                "cas_true%=:\n\t"
-                : "=m"(result)
-                : "b"(addr), "r"(newval), "a"(expected) //input: %2 = newval, %1 = *addr 
-                : "memory"); //the code is changing the contents of memory.
-  return result;
-} 
+cas(volatile void* addr, int expected, int newval) {
+    int result;
+    asm volatile("movl %2 , %%eax\n\t"
+                "lock; cmpxchg %3, %0\n\t"
+                "pushfl\n\t"
+                "popl %1\n\t"
+                "and $0x0040, %1\n\t"
+                : "+m" (*(int*)addr), "=r" (result)
+                : "r" (expected), "r" (newval)
+                : "%eax"
+                );
+    return result;
+}
 
 
 

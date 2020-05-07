@@ -95,7 +95,7 @@ void stopContTest()
 		printf(1,"fork failed\n");
 		exit();
 	}
-	if(pid ==0){
+	if(pid == 0){
 		for(int i=0;i<15;i++){
 			printf(1,"child fib calc: %d\n",fib(25));
 		}		
@@ -104,8 +104,9 @@ void stopContTest()
 	}
 	else{
 		kill(pid,SIGSTOP);
-		printf(1,"parent fib calc: %d\n",fib(35));
+		printf(1,"parent fib calc: %d\n",fib(25));
 		kill(pid,SIGCONT);
+    printf(1,"parent: %d\n",getpid());
 		wait();
 	}
 	printf(1,"stopContTest Passed\n\n");
@@ -169,11 +170,11 @@ int
 main(int argc, char *argv[])
 {
   printf(1,"Signal Test Started:\n\n");
-  userHandlersTest();
+  //userHandlersTest();
   stopContTest();
-  procMaskTest();
-  signalDefaultTest();
-  killIgnoreTest();
+  // procMaskTest();
+  // signalDefaultTest();
+  // killIgnoreTest();
   printf(1,"Signal Test ended:\n"); 
   exit();
 }

@@ -33,7 +33,7 @@ struct context {
 };
 
 // INTER_* = intermidiate state before state *
-enum procstate { UNUSED, EMBRYO, SLEEPING, INTER_SLEEPING, RUNNABLE,INTER_RUNNABLE, RUNNING, ZOMBIE, INTER_ZOMBIE };
+enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
  
 struct backuptrapframe {
   // registers as pushed by pusha
@@ -85,7 +85,7 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  uint pendingSignals;         // 32bit array for all pending signals
+  volatile uint pendingSignals;         // 32bit array for all pending signals
   uint signalMask;             // 32bit array for signal mask
   uint signalMask_backup;
   struct sigaction signalHandlers[32];    // array of size 32 for all sig handlers
