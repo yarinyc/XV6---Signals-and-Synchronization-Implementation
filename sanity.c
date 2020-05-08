@@ -104,9 +104,8 @@ void stopContTest()
 	}
 	else{
 		kill(pid,SIGSTOP);
-		printf(1,"parent fib calc: %d\n",fib(25));
+		printf(1,"parent fib calc: %d\n",fib(20));
 		kill(pid,SIGCONT);
-    printf(1,"parent: %d\n",getpid());
 		wait();
 	}
 	printf(1,"stopContTest Passed\n\n");
