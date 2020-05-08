@@ -85,12 +85,13 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  volatile uint pendingSignals;         // 32bit array for all pending signals
+  uint pendingSignals;         // 32bit array for all pending signals
   uint signalMask;             // 32bit array for signal mask
   uint signalMask_backup;
   struct sigaction signalHandlers[32];    // array of size 32 for all sig handlers
   struct backuptrapframe userTrapBackup; // user trap frame backup
   int block_user_signals;      // 1 if proc is executing a user sighandler, 0 otherwise
+  int suspend;
 };
 
 // Process memory is laid out contiguously, low addresses first:

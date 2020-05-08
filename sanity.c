@@ -67,18 +67,22 @@ void userHandlersTest(){
           if(i % 3 == 0){
             act.sa_handler = &userHandler1;
             sigaction(SIGUSER1,&act,null);
+            printf(1,"(fork number: %d) ",i);
             kill(getpid(), SIGUSER1);
           }
           if(i % 3 == 1){
             act.sa_handler = &userHandler2;
             sigaction(SIGUSER2,&act,null);
+            printf(1,"(fork number: %d) ",i);
             kill(getpid(), SIGUSER2);
           }
           if(i % 3 == 2){
             act.sa_handler = &userHandler3;
             sigaction(SIGUSER3,&act,null);
+            printf(1,"(fork number: %d) ",i);
             kill(getpid(), SIGUSER3);
           }
+          for(;;); //loops for ever until recieving a signal
       }
       else{
         wait();
@@ -114,7 +118,7 @@ void stopContTest()
 void procMaskTest(){
 	  printf(1,"procMaskTest \n");
 	  struct sigaction act;
-
+    //part 1:
     int mask = 1 << SIGUSER3;
     sigprocmask(mask);
 	  kill(getpid(),SIGUSER3); // if test exits here then failed
@@ -123,7 +127,7 @@ void procMaskTest(){
     act.sa_handler = (void*)SIG_IGN;
     sigaction(SIGUSER3,&act,null);
     sigprocmask(0);
-
+    //part 2:
     mask = 1 << SIGUSER2;
     act.sigmask = mask;
     act.sa_handler = &bigHandler;
@@ -169,12 +173,12 @@ int
 main(int argc, char *argv[])
 {
   printf(1,"Signal Test Started:\n\n");
-  //userHandlersTest();
+  userHandlersTest();
   stopContTest();
-  // procMaskTest();
-  // signalDefaultTest();
-  // killIgnoreTest();
-  printf(1,"Signal Test ended:\n"); 
+  procMaskTest();
+  signalDefaultTest();
+  killIgnoreTest();
+  printf(1,"Signal Test Ended Succesfully!\n"); 
   exit();
 }
 
