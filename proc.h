@@ -92,6 +92,7 @@ struct proc {
   struct backuptrapframe userTrapBackup; // user trap frame backup
   int block_user_signals;      // 1 if proc is executing a user sighandler, 0 otherwise
   int suspend;
+  int wakeup;
 };
 
 // Process memory is laid out contiguously, low addresses first:

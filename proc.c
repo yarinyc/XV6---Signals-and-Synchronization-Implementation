@@ -32,6 +32,13 @@ cpuid() {
   return mycpu()-cpus;
 }
 
+int
+fib(int n){ //some calculation
+	if(n<=1)
+		return n;
+	else return fib(n-1)+fib(n-2);
+}
+
 // Must be called with interrupts disabled to avoid the caller being
 // rescheduled between reading lapicid and running through the loop.
 struct cpu*
@@ -131,6 +138,7 @@ allocproc(void)
   p->pendingSignals = 0;
   p->block_user_signals = 0;
   p->suspend = 0;
+  p->wakeup = 0;
 
   return p;
 }
@@ -316,6 +324,7 @@ wait(void)
         continue;
       havekids = 1;
       while(p->state == -ZOMBIE){
+        cprintf("still -ZOMBIE\n");
         //busy-wait
       }
       if(p->state == ZOMBIE){
@@ -356,6 +365,7 @@ wait(void)
     }
 
     curproc->chan = (void*)curproc;
+    //cprintf("pid: %d sleeping on %x\n",curproc->pid, curproc->chan);
     sched();
     curproc->chan = 0;
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
@@ -397,13 +407,21 @@ scheduler(void)
       switchkvm();
 
       if(cas(&p->state,-ZOMBIE, ZOMBIE)){
+        //cprintf("pid %d waking up channel %x\n", p->pid, p->parent);
         wakeup1(p->parent);//****
       }
 
       if(cas(&p->state, -SLEEPING, SLEEPING)){
         if(p->killed == 1){
-          if(!cas(&p->state, SLEEPING,RUNNABLE))
+          if(!cas(&p->state, SLEEPING,RUNNABLE)){
             panic("scheduler: failed(killed=1) SLEEPING to RUNNABLE");
+          }
+        }
+        else if(p->wakeup == 1){
+          p->wakeup = 0;
+          if(!cas(&p->state, SLEEPING,RUNNABLE)){
+            panic("scheduler: failed(wakeup=1) SLEEPING to RUNNABLE");
+          }
         }
       }
       cas(&p->state, -RUNNABLE, RUNNABLE);
@@ -527,15 +545,17 @@ static void
 wakeup1(void *chan)
 {
   struct proc *p;
-
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if((p->state == SLEEPING || p->state == -SLEEPING) && p->chan == chan){
-      while(p->state == -SLEEPING){
+      if(p->state == -SLEEPING){
+        p->wakeup = 1;
+        //cprintf("still -SLEEPING\n");
         //busy-wait for -SLEEPING to become SLEEPING
       }
       if(p->state != SLEEPING){
         continue;
       }
+      p->wakeup = 0;
       if(!cas(&p->state, SLEEPING, RUNNABLE))
         panic("wakeup1: failed cas SLEEPING to RUNNABLE");
     }
@@ -573,6 +593,7 @@ kill(int pid, int signum)
       }while(!(cas(&p->pendingSignals, pending, (pending|bitwise))));
       if(signum == SIGKILL && (p->state == -SLEEPING || p->state == SLEEPING)){
         while(p->state == -SLEEPING){
+          cprintf("kill: still -SLEEPING\n");
           //busy-wait for -SLEEPING to become SLEEPING
         }
         if(!cas(&p->state, SLEEPING, RUNNABLE))
@@ -666,6 +687,7 @@ sigret(void){
 // signal handlers for all the default behaviour:
 void 
 sigkill(int signum){
+  popcli();
   struct proc *p = myproc();
   p->killed = 1;
   uint bitwise = 1<<signum;
@@ -719,7 +741,7 @@ check_signals(void){
     }
     yield();
   }
-
+  pushcli();
   uint call_sigret_size = (uint)&call_sigret_end - (uint)&call_sigret;
   for(int signum=0; signum<32; signum++){ //go through all pending signals and run their sa_handler()
     int shift = 1 << signum;
@@ -767,10 +789,12 @@ check_signals(void){
         do{
           pending = p->pendingSignals;
         }while(!(cas(&p->pendingSignals, pending, (pending & (~bitwise)) )));
+        popcli();
         return; //return to trapret
       }
     }
   }
+  popcli();
 }
 
 
