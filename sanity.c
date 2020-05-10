@@ -2,7 +2,7 @@
 #include "stat.h"
 #include "user.h"
 
-#define N	30
+#define N	60
 
 #define SIGUSER1 20
 #define SIGUSER2 21
@@ -82,13 +82,52 @@ void userHandlersTest(){
             printf(1,"(fork number: %d) ",i);
             kill(getpid(), SIGUSER3);
           }
-          for(;;); //loops for ever until recieving a signal
+          for(;;){
+            //loops for ever until recieving a signal
+          }
       }
       else{
         wait();
       }
 	}
 	printf(1,"userHandlersTest Passed\n\n");
+}
+
+void concurrentUserHandlersTest(){
+	printf(1,"concurrentUserHandlersTest\n");
+	for(int i=0; i<N; i++){
+      int pid = fork();
+      if(pid<0){
+        printf(1,"fork failed\n");
+        exit();
+      }
+      if(pid == 0){
+        struct sigaction act;
+        act.sigmask=0;
+          if(i % 3 == 0){
+            act.sa_handler = &userHandler1;
+            sigaction(SIGUSER1,&act,null);
+            kill(getpid(), SIGUSER1);
+          }
+          if(i % 3 == 1){
+            act.sa_handler = &userHandler2;
+            sigaction(SIGUSER2,&act,null);
+            kill(getpid(), SIGUSER2);
+          }
+          if(i % 3 == 2){
+            act.sa_handler = &userHandler3;
+            sigaction(SIGUSER3,&act,null);
+            kill(getpid(), SIGUSER3);
+          }
+        for(;;){
+          //loops for ever until recieving a signal
+        }
+      }
+	}
+  for(int i=0; i<N; i++){
+    wait();
+  }
+	printf(1,"concurrentUserHandlersTest Passed\n\n");
 }
 
 void stopContTest()
@@ -108,7 +147,7 @@ void stopContTest()
 	}
 	else{
 		kill(pid,SIGSTOP);
-		printf(1,"parent fib calc: %d\n",fib(20));
+		printf(1,"parent fib calc: %d\n",fib(35));
 		kill(pid,SIGCONT);
 		wait();
 	}
@@ -174,6 +213,7 @@ main(int argc, char *argv[])
 {
   printf(1,"Signal Test Started:\n\n");
   userHandlersTest();
+  concurrentUserHandlersTest();
   stopContTest();
   procMaskTest();
   signalDefaultTest();

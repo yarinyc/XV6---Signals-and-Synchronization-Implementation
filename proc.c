@@ -32,13 +32,6 @@ cpuid() {
   return mycpu()-cpus;
 }
 
-int
-fib(int n){ //some calculation
-	if(n<=1)
-		return n;
-	else return fib(n-1)+fib(n-2);
-}
-
 // Must be called with interrupts disabled to avoid the caller being
 // rescheduled between reading lapicid and running through the loop.
 struct cpu*
@@ -323,11 +316,11 @@ wait(void)
       if(p->parent != curproc)
         continue;
       havekids = 1;
-      while(p->state == -ZOMBIE){
-        cprintf("still -ZOMBIE\n");
-        //busy-wait
-      }
-      if(p->state == ZOMBIE){
+      // while(p->state == -ZOMBIE){
+      //   cprintf("still -ZOMBIE\n");
+      //   //busy-wait
+      // }
+      if(cas(&p->state,ZOMBIE, ZOMBIE)){
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
@@ -396,6 +389,17 @@ scheduler(void)
     pushcli();
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(!cas(&p->state, RUNNABLE, RUNNING)){
+        if((p->state == SLEEPING) && (p->wakeup > 0)){
+            if(cas(&p->state, SLEEPING, -RUNNABLE)){
+              uint n;
+              do{
+                n = p->wakeup;
+              } while(!cas(&p->wakeup, n, n-1));
+              if(!cas(&p->state, -RUNNABLE, RUNNABLE)){
+                panic("scheduler: failed -RUNNABLE to RUNNABLE");
+              }
+            }
+          }
         continue;
       }
       // Switch to chosen process.  It is the process's job
@@ -416,12 +420,13 @@ scheduler(void)
           if(!cas(&p->state, SLEEPING,RUNNABLE)){
             panic("scheduler: failed(killed=1) SLEEPING to RUNNABLE");
           }
-        }
-        else if(p->wakeup == 1){
-          p->wakeup = 0;
-          if(!cas(&p->state, SLEEPING,RUNNABLE)){
-            panic("scheduler: failed(wakeup=1) SLEEPING to RUNNABLE");
-          }
+        } else if(p->wakeup > 0){
+            if(cas(&p->state, SLEEPING,-RUNNABLE)){
+              uint n;
+              do{
+                n = p->wakeup;
+              } while(!cas(&p->wakeup, n, n-1));          
+            }
         }
       }
       cas(&p->state, -RUNNABLE, RUNNABLE);
@@ -547,17 +552,21 @@ wakeup1(void *chan)
   struct proc *p;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if((p->state == SLEEPING || p->state == -SLEEPING) && p->chan == chan){
-      if(p->state == -SLEEPING){
-        p->wakeup = 1;
+      // if(1){
+        uint n;
+        do{
+          n = p->wakeup;
+        } while(!cas(&p->wakeup, n, n+1));
+        //continue;
         //cprintf("still -SLEEPING\n");
         //busy-wait for -SLEEPING to become SLEEPING
-      }
-      if(p->state != SLEEPING){
-        continue;
-      }
-      p->wakeup = 0;
-      if(!cas(&p->state, SLEEPING, RUNNABLE))
-        panic("wakeup1: failed cas SLEEPING to RUNNABLE");
+      // }
+      // if(!cas(&p->state, SLEEPING, SLEEPING)){
+      //   continue;
+      // }
+      // p->wakeup = 0;
+      // if(!cas(&p->state, SLEEPING, RUNNABLE))
+      //   panic("wakeup1: failed cas SLEEPING to RUNNABLE");
     }
   }
 }
