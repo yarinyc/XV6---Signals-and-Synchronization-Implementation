@@ -731,7 +731,30 @@ sigstop(int signum){
 
 extern void check_signals(void);
 extern void* call_sigret;
-extern void* call_sigret_end; 
+extern void* call_sigret_end;
+
+int
+shouldResume(struct proc *p){
+  pushcli();
+  if( p->pendingSignals & (1<<SIGKILL) ){ // SIGKILL recieved
+    popcli();
+    return 1;
+  }
+  for(int signum=0; signum<32; signum++){
+    if(signum == SIGSTOP)
+      continue;
+    int shift = 1 << signum;
+    if(((p->pendingSignals & shift)!= 0) && ((p->signalMask & shift) == 0)) {
+        void* handler = p->signalHandlers[signum].sa_handler;
+        if( (handler == (void*)SIGKILL) || (handler == (void*)SIG_DFL) || (handler == (void*)SIGCONT) ){
+          popcli();
+          return 1; // recieved signal with handler = SIGKILL/SIG_DFL/SIGCONT
+        }
+    }
+  }
+  popcli();
+  return 0; // should stay suspended
+}
 
 void
 check_signals(void){
@@ -744,8 +767,7 @@ check_signals(void){
 
   //if process is suspended and did not recieve SIGCONT yield() immediately
   while(p->suspend == 1){
-
-    if((p->pendingSignals & (1<<SIGCONT)) && !(p->pendingSignals & (1<<SIGKILL))){
+    if(shouldResume(p) == 1){
       break;
     }
     yield();

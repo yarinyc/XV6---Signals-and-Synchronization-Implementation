@@ -147,7 +147,8 @@ void stopContTest()
 	}
 	else{
 		kill(pid,SIGSTOP);
-		printf(1,"parent fib calc: %d\n",fib(35));
+    sleep(100);
+		//printf(1,"parent fib calc: %d\n",fib(35));
 		kill(pid,SIGCONT);
 		wait();
 	}
