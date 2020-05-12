@@ -272,14 +272,11 @@ exit(void)
   end_op();
   curproc->cwd = 0;
 
-  //acquire(&ptable.lock);
   pushcli();
   if(!cas(&curproc->state, RUNNING, -ZOMBIE))
     panic("exit: cas no.1 failed");
 
   // Parent might be sleeping in wait().
-  //wakeup1(curproc->parent); ????
-
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->parent == curproc){
@@ -303,10 +300,8 @@ wait(void)
   int havekids, pid;
   struct proc *curproc = myproc();
   
-  //acquire(&ptable.lock);
   pushcli();
   for(;;){
-
     if (!cas(&(curproc->state), RUNNING,-SLEEPING))
         panic("wait: cas failed");
 
@@ -316,10 +311,6 @@ wait(void)
       if(p->parent != curproc)
         continue;
       havekids = 1;
-      // while(p->state == -ZOMBIE){
-      //   cprintf("still -ZOMBIE\n");
-      //   //busy-wait
-      // }
       if(cas(&p->state,ZOMBIE, ZOMBIE)){
         // Found one.
         pid = p->pid;
@@ -341,7 +332,6 @@ wait(void)
 
         if (!(cas(&curproc->state,-SLEEPING, RUNNING)))
           panic("wait: cas failed -> -SLEEPING to RUNNING");
-        //release(&ptable.lock);
         popcli();
         return pid;
       }
@@ -349,16 +339,14 @@ wait(void)
 
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
-      //release(&ptable.lock);
       if(!(cas(&curproc->state, -SLEEPING, RUNNING))){
         panic("wait: cas failed -> -SLEEPING to RUNNING 2");
       }
       popcli();
       return -1;
     }
-
+    //curproc sleeps on its own address
     curproc->chan = (void*)curproc;
-    //cprintf("pid: %d sleeping on %x\n",curproc->pid, curproc->chan);
     sched();
     curproc->chan = 0;
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
@@ -385,16 +373,15 @@ scheduler(void)
     sti();
 
     // Loop over process table looking for process to run.
-    //acquire(&ptable.lock);
     pushcli();
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(!cas(&p->state, RUNNABLE, RUNNING)){
-        if((p->state == SLEEPING) && (p->wakeup > 0)){
+        if((p->state == SLEEPING) && (p->wakeup > 0)){ // if process is sleeping and needs to wakeup
             if(cas(&p->state, SLEEPING, -RUNNABLE)){
               uint n;
               do{
                 n = p->wakeup;
-              } while(!cas(&p->wakeup, n, n-1));
+              } while(!cas(&p->wakeup, n, n-1)); //one woke up
               if(!cas(&p->state, -RUNNABLE, RUNNABLE)){
                 panic("scheduler: failed -RUNNABLE to RUNNABLE");
               }
@@ -402,43 +389,36 @@ scheduler(void)
           }
         continue;
       }
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      // Switch to chosen process.
       c->proc = p;
       switchuvm(p);
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
       if(cas(&p->state,-ZOMBIE, ZOMBIE)){
-        //cprintf("pid %d waking up channel %x\n", p->pid, p->parent);
         wakeup1(p->parent);//****
       }
 
       if(cas(&p->state, -SLEEPING, SLEEPING)){
-        if(p->killed == 1){
+        if(p->killed == 1){ //needs to keep runnig inorder to die
           if(!cas(&p->state, SLEEPING,RUNNABLE)){
-            panic("scheduler: failed(killed=1) SLEEPING to RUNNABLE");
           }
-        } else if(p->wakeup > 0){
+        } else if(p->wakeup > 0){ //if proc needs to wake up
             if(cas(&p->state, SLEEPING,-RUNNABLE)){
               uint n;
               do{
                 n = p->wakeup;
-              } while(!cas(&p->wakeup, n, n-1));          
+              } while(!cas(&p->wakeup, n, n-1));// one less wating for proc to wake up          
             }
         }
       }
       cas(&p->state, -RUNNABLE, RUNNABLE);
 
-
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
-    //release(&ptable.lock);
     popcli();
-
   }
 }
 
@@ -454,9 +434,6 @@ sched(void)
 {
   int intena;
   struct proc *p = myproc();
-
-  // if(!holding(&ptable.lock))
-  //   panic("sched ptable.lock");
   if(mycpu()->ncli != 1)
     panic("sched locks");
   if(p->state == RUNNING)
@@ -485,8 +462,7 @@ void
 forkret(void)
 {
   static int first = 1;
-  // Still holding ptable.lock from scheduler.
-  // release(&ptable.lock);
+  // pushcli in scheduler.
   popcli();
   if (first) {
     // Some initialization functions must be run in the context
@@ -528,10 +504,6 @@ sleep(void *chan, struct spinlock *lk)
 
   release(lk);
 
-
-  // Go to sleep.
-  //p->state = SLEEPING;
-
   sched();
 
   // Tidy up.
@@ -552,21 +524,10 @@ wakeup1(void *chan)
   struct proc *p;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if((p->state == SLEEPING || p->state == -SLEEPING) && p->chan == chan){
-      // if(1){
         uint n;
         do{
           n = p->wakeup;
-        } while(!cas(&p->wakeup, n, n+1));
-        //continue;
-        //cprintf("still -SLEEPING\n");
-        //busy-wait for -SLEEPING to become SLEEPING
-      // }
-      // if(!cas(&p->state, SLEEPING, SLEEPING)){
-      //   continue;
-      // }
-      // p->wakeup = 0;
-      // if(!cas(&p->state, SLEEPING, RUNNABLE))
-      //   panic("wakeup1: failed cas SLEEPING to RUNNABLE");
+        } while(!cas(&p->wakeup, n, n+1)); //one more wating for proc to wake up
     }
   }
 }
@@ -591,7 +552,6 @@ kill(int pid, int signum)
   if(signum<0 || signum>31){
     return -1;
   }
-  // acquire(&ptable.lock);
   pushcli();
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
@@ -600,7 +560,7 @@ kill(int pid, int signum)
       do{
         pending = p->pendingSignals;
       }while(!(cas(&p->pendingSignals, pending, (pending|bitwise))));
-      if(signum == SIGKILL && (p->state == -SLEEPING || p->state == SLEEPING)){
+      if(signum == SIGKILL && (p->state == -SLEEPING || p->state == SLEEPING)){ //needs to run inorder to die
         while(p->state == -SLEEPING){
           cprintf("kill: still -SLEEPING\n");
           //busy-wait for -SLEEPING to become SLEEPING
@@ -608,12 +568,10 @@ kill(int pid, int signum)
         if(!cas(&p->state, SLEEPING, RUNNABLE))
           panic("kill: failed cas SLEEPING to RUNNABLE");
       }
-      // release(&ptable.lock);
       popcli();
       return 0;
     }
   }
-  // release(&ptable.lock);
   popcli();
   return -1;
 }
@@ -766,12 +724,12 @@ check_signals(void){
   }
 
   //if process is suspended and did not recieve SIGCONT yield() immediately
-  while(p->suspend == 1){
-    if(shouldResume(p) == 1){
-      break;
+    while(p->suspend == 1){
+      if(shouldResume(p) == 1){
+        break;
+      }
+      yield();
     }
-    yield();
-  }
   pushcli();
   uint call_sigret_size = (uint)&call_sigret_end - (uint)&call_sigret;
   for(int signum=0; signum<32; signum++){ //go through all pending signals and run their sa_handler()

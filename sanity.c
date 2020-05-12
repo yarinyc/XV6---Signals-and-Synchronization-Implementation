@@ -28,7 +28,8 @@ void printHandler(int signum){
 void bigHandler(int signum){
   kill(getpid(),SIGUSER2);
   for (int i = 0; i < 5; i++){
-    printf(1,"handler fib: %d\n",fib(30));
+    fib(30);
+    printf(1,"bigHandler...\n");
   }
   struct sigaction act;
   act.sa_handler = (void*)SIG_IGN;
@@ -38,17 +39,14 @@ void bigHandler(int signum){
 }
 
 void userHandler1(int signum){
-  printf(1,"handler1, got signal: %d\n", signum);
   flag=1;
   exit();
 }
 void userHandler2(int signum){
-  printf(1,"handler2, got signal: %d\n", signum);
   flag=1;
   exit();
 }
 void userHandler3(int signum){
-  printf(1,"handler3, got signal: %d\n", signum);
   flag=1;
   exit();
 }
@@ -67,19 +65,19 @@ void userHandlersTest(){
           if(i % 3 == 0){
             act.sa_handler = &userHandler1;
             sigaction(SIGUSER1,&act,null);
-            printf(1,"(fork number: %d) ",i);
+            printf(1,"(fork number: %d) \n",i);
             kill(getpid(), SIGUSER1);
           }
           if(i % 3 == 1){
             act.sa_handler = &userHandler2;
             sigaction(SIGUSER2,&act,null);
-            printf(1,"(fork number: %d) ",i);
+            printf(1,"(fork number: %d) \n",i);
             kill(getpid(), SIGUSER2);
           }
           if(i % 3 == 2){
             act.sa_handler = &userHandler3;
             sigaction(SIGUSER3,&act,null);
-            printf(1,"(fork number: %d) ",i);
+            printf(1,"(fork number: %d) \n",i);
             kill(getpid(), SIGUSER3);
           }
           for(;;){
@@ -140,7 +138,7 @@ void stopContTest()
 	}
 	if(pid == 0){
 		for(int i=0;i<15;i++){
-			printf(1,"child fib calc: %d\n",fib(25));
+			fib(25);
 		}		
 		printf(1,"child done\n");
 		exit();
@@ -148,7 +146,6 @@ void stopContTest()
 	else{
 		kill(pid,SIGSTOP);
     sleep(100);
-		//printf(1,"parent fib calc: %d\n",fib(35));
 		kill(pid,SIGCONT);
 		wait();
 	}
@@ -162,7 +159,7 @@ void procMaskTest(){
     int mask = 1 << SIGUSER3;
     sigprocmask(mask);
 	  kill(getpid(),SIGUSER3); // if test exits here then failed
-    printf(1,"fib calc: %d\n",fib(10));
+    fib(25);
     //return to default mask
     act.sa_handler = (void*)SIG_IGN;
     sigaction(SIGUSER3,&act,null);
@@ -184,8 +181,8 @@ void signalDefaultTest(){
   printf(1,"signalDefaultTest\n");
 	sigaction(5,&act, &old);
   if(old.sa_handler != (void*)SIG_DFL){
-  printf(1,"signalDefaultTest fail signal 5 wasnt default ");
-  exit();
+    printf(1,"signalDefaultTest fail signal 5 wasn't default ");
+    exit();
   }
   sigaction(5,&old, null); 
   printf(1,"signalDefaultTest Passed\n\n");
@@ -209,6 +206,56 @@ void killIgnoreTest(){
   }
 }
 
+void inheritTest(){
+  printf(1,"inheritTest\n");
+  struct sigaction act,_act,act1,act2,act3;
+  act1.sa_handler = &userHandler1;
+  act2.sa_handler = &userHandler2;
+  act3.sa_handler = &userHandler3;
+
+  sigprocmask(((1 << 13) | (1 << 14) | (1 << 15)));
+  //Changing signal handler of signals 13,14,15
+  sigaction(13, &act1, null);
+  sigaction(14, &act2, null);
+  sigaction(15, &act3, null);
+
+  int pid = fork();
+
+  if(pid < 0){
+    printf(1,"inheritTest failed in fork\n");
+  }
+  if (pid == 0) {
+      if (sigprocmask(0) != ((1 << 13) | (1 << 14) | (1 << 15))){
+          printf(1,"inheritTest failed : Child didnt inherit mask array\n");
+          exit();
+      }
+      _act.sa_handler = (void*)SIG_DFL;
+      sigaction(13, &_act, &act);
+      if(act.sa_handler != &userHandler1){
+          printf(1,"inheritTest failed : Child didnt inherit signal handler\n");
+          exit();
+      }
+      sigaction(14, &_act, &act);
+      if(act.sa_handler != &userHandler2){
+          printf(1,"inheritTest failed : Child didnt inherit signal handler\n");
+          exit();
+      }
+      sigaction(15, &_act, &act);
+      if(act.sa_handler != &userHandler3){
+          printf(1,"inheritTest failed : Child didnt inherit signal handler\n");
+          exit();
+      }
+      for(;;);
+  }
+  else {
+      sleep(20);
+      kill(pid,15);
+      wait();
+  }
+
+  printf(1,"inheritTest Passed\n\n");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -219,6 +266,7 @@ main(int argc, char *argv[])
   procMaskTest();
   signalDefaultTest();
   killIgnoreTest();
+  inheritTest();
   printf(1,"Signal Test Ended Succesfully!\n"); 
   exit();
 }
