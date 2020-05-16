@@ -223,6 +223,7 @@ void inheritTest(){
 
   if(pid < 0){
     printf(1,"inheritTest failed in fork\n");
+    exit();
   }
   if (pid == 0) {
       if (sigprocmask(0) != ((1 << 13) | (1 << 14) | (1 << 15))){

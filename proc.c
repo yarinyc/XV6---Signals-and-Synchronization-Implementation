@@ -131,7 +131,6 @@ allocproc(void)
   p->pendingSignals = 0;
   p->block_user_signals = 0;
   p->suspend = 0;
-  p->wakeup = 0;
 
   return p;
 }
@@ -326,7 +325,6 @@ wait(void)
         p->pendingSignals = 0; // added may 2nd
         p->signalMask = 0;
 
-        //p->state = UNUSED;
         if (!(cas(&p->state, ZOMBIE, UNUSED)))
           panic("wait: cas failed -> ZOMBIE to UNUSED");
 
@@ -376,17 +374,9 @@ scheduler(void)
     pushcli();
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(!cas(&p->state, RUNNABLE, RUNNING)){
-        if((p->state == SLEEPING) && (p->wakeup > 0)){ // if process is sleeping and needs to wakeup
-            if(cas(&p->state, SLEEPING, -RUNNABLE)){
-              uint n;
-              do{
-                n = p->wakeup;
-              } while(!cas(&p->wakeup, n, n-1)); //one woke up
-              if(!cas(&p->state, -RUNNABLE, RUNNABLE)){
-                panic("scheduler: failed -RUNNABLE to RUNNABLE");
-              }
-            }
-          }
+        if(cas(&p->state,ZOMBIE, ZOMBIE)){
+          wakeup1(p->parent);//****
+        }
         continue;
       }
       // Switch to chosen process.
@@ -401,15 +391,9 @@ scheduler(void)
 
       if(cas(&p->state, -SLEEPING, SLEEPING)){
         if(p->killed == 1){ //needs to keep runnig inorder to die
-          if(!cas(&p->state, SLEEPING,RUNNABLE)){
+          if(!cas(&p->state, SLEEPING,-RUNNABLE)){
+            panic("scheduler: cas failed SLEEPING to -RUNNABLE");
           }
-        } else if(p->wakeup > 0){ //if proc needs to wake up
-            if(cas(&p->state, SLEEPING,-RUNNABLE)){
-              uint n;
-              do{
-                n = p->wakeup;
-              } while(!cas(&p->wakeup, n, n-1));// one less wating for proc to wake up          
-            }
         }
       }
       cas(&p->state, -RUNNABLE, RUNNABLE);
@@ -503,7 +487,9 @@ sleep(void *chan, struct spinlock *lk)
   // so it's okay to release lk.
 
   release(lk);
-
+  // if(p->pid>2){
+  //   cprintf("sleep %d lock %s\n",p->pid,lk->name);
+  // }
   sched();
 
   // Tidy up.
@@ -523,11 +509,11 @@ wakeup1(void *chan)
 {
   struct proc *p;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if((p->state == SLEEPING || p->state == -SLEEPING) && p->chan == chan){
-        uint n;
-        do{
-          n = p->wakeup;
-        } while(!cas(&p->wakeup, n, n+1)); //one more wating for proc to wake up
+    if((cas(&p->state, SLEEPING, SLEEPING) || cas(&p->state, -SLEEPING, -SLEEPING)) && p->chan == chan){
+      while(cas(&p->state, -SLEEPING, -SLEEPING)){
+        //busy-wait for -SLEEPING to become SLEEPING
+      }
+      cas(&p->state, SLEEPING, RUNNABLE);
     }
   }
 }
@@ -539,6 +525,23 @@ wakeup(void *chan)
   pushcli();
   wakeup1(chan);
   popcli();
+}
+
+int
+shouldWakeup(int signum, struct proc *p){
+  if( signum == SIGKILL ){ // SIGKILL recieved
+    return 1;
+  }
+  void* handler = p->signalHandlers[signum].sa_handler;
+  if(signum != SIGSTOP){
+    if((signum == SIGCONT) && (handler == (void*)SIGKILL)){
+      return 1;
+    }
+    if((signum != SIGCONT) && ((handler == (void*)SIGKILL) || (handler == (void*)SIG_DFL))){
+      return 1;
+    }
+  }
+  return 0; // should stay asleep
 }
 
 // Kill the process with the given pid.
@@ -560,11 +563,12 @@ kill(int pid, int signum)
       do{
         pending = p->pendingSignals;
       }while(!(cas(&p->pendingSignals, pending, (pending|bitwise))));
-      if(signum == SIGKILL && (p->state == -SLEEPING || p->state == SLEEPING)){ //needs to run inorder to die
-        while(p->state == -SLEEPING){
-          cprintf("kill: still -SLEEPING\n");
+      if((shouldWakeup(signum,p) == 1) && ( cas(&p->state, -SLEEPING, -SLEEPING) || cas(&p->state, SLEEPING, SLEEPING))){ //needs to run inorder to die
+        while(cas(&p->state, -SLEEPING, -SLEEPING)){
           //busy-wait for -SLEEPING to become SLEEPING
         }
+        if(!cas(&p->state, SLEEPING, SLEEPING))
+          continue;
         if(!cas(&p->state, SLEEPING, RUNNABLE))
           panic("kill: failed cas SLEEPING to RUNNABLE");
       }
@@ -654,15 +658,14 @@ sigret(void){
 // signal handlers for all the default behaviour:
 void 
 sigkill(int signum){
-  popcli();
   struct proc *p = myproc();
-  p->killed = 1;
   uint bitwise = 1<<signum;
   uint pending;
   do{
     pending = p->pendingSignals;
   }while(!(cas(&p->pendingSignals, pending, (pending & (~bitwise)) )));
-  exit(); // stop the process from running
+  p->killed = 1;
+  yield(); // stop the process from running
 }
 
 void
@@ -693,9 +696,7 @@ extern void* call_sigret_end;
 
 int
 shouldResume(struct proc *p){
-  pushcli();
   if( p->pendingSignals & (1<<SIGKILL) ){ // SIGKILL recieved
-    popcli();
     return 1;
   }
   for(int signum=0; signum<32; signum++){
@@ -705,12 +706,10 @@ shouldResume(struct proc *p){
     if(((p->pendingSignals & shift)!= 0) && ((p->signalMask & shift) == 0)) {
         void* handler = p->signalHandlers[signum].sa_handler;
         if( (handler == (void*)SIGKILL) || (handler == (void*)SIG_DFL) || (handler == (void*)SIGCONT) ){
-          popcli();
           return 1; // recieved signal with handler = SIGKILL/SIG_DFL/SIGCONT
         }
     }
   }
-  popcli();
   return 0; // should stay suspended
 }
 
@@ -730,7 +729,6 @@ check_signals(void){
       }
       yield();
     }
-  pushcli();
   uint call_sigret_size = (uint)&call_sigret_end - (uint)&call_sigret;
   for(int signum=0; signum<32; signum++){ //go through all pending signals and run their sa_handler()
     int shift = 1 << signum;
@@ -778,12 +776,10 @@ check_signals(void){
         do{
           pending = p->pendingSignals;
         }while(!(cas(&p->pendingSignals, pending, (pending & (~bitwise)) )));
-        popcli();
         return; //return to trapret
       }
     }
   }
-  popcli();
 }
 
 

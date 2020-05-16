@@ -75,7 +75,7 @@ struct proc {
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
   char *kstack;                // Bottom of kernel stack for this process
-  enum procstate state;        // Process state
+  volatile enum procstate state;        // Process state
   int pid;                     // Process ID
   struct proc *parent;         // Parent process
   struct trapframe *tf;        // Trap frame for current syscall
@@ -91,8 +91,7 @@ struct proc {
   struct sigaction signalHandlers[32];    // array of size 32 for all sig handlers
   struct backuptrapframe userTrapBackup; // user trap frame backup
   int block_user_signals;      // 1 if proc is executing a user sighandler, 0 otherwise
-  int suspend;
-  uint wakeup;
+  volatile int suspend;
 };
 
 // Process memory is laid out contiguously, low addresses first:
